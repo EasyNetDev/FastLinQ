@@ -3,6 +3,11 @@
 This driver is based on original Marvell FastLinQ QL4XXXX 8.70.12.0 which can be compiled until Linux Kernel 5.15.x.
 Because I notice that the Linux QED/QEDE driver is crashing each 2 reboots, I wanted to try this driver, but I couldn't compile it on Kernel 6.1.x.
 
+With this patched driver I was able to compile it up to Linux 6.1.0 without issues and without crashes. Is the same code but adapted to new Linux Kernel API, like moving out functions or structures outside the main structures and they must be used coded in driver.
+Examples:
+1. `scsi_cmnd` moved out the commands `scsi_done` and the structure `SCp` must be implemented as `scsi_pointer` in driver.
+2. Functions that are obsolete for long time and they were only wrappers to other functions, now they are gone and the code must be adapted to the new functions.
+
 ### Change log
 #### QEDE driver
 ##### qede-8.70.12.0/src/qede_main.c 
