@@ -146,10 +146,26 @@ static ssize_t speed_show(struct device *dev,
 static DEVICE_ATTR_RO(port_state);
 static DEVICE_ATTR_RO(speed);
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+static struct attribute *qedi_shost_attrs[] = {
+	&dev_attr_port_state.attr,
+	&dev_attr_speed.attr,
+	NULL,
+};
 
+static const struct attribute_group qedi_shost_attr_group = {
+        .attrs = qedi_shost_attrs
+};
+
+const struct attribute_group *qedi_shost_groups[] = {
+	&qedi_shost_attr_group,
+	NULL
+};
+#else
 struct device_attribute *qedi_shost_attrs[] = {
 	&dev_attr_port_state,
 	&dev_attr_speed,
 	NULL
 };
+#endif
 

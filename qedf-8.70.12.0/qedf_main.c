@@ -1052,6 +1052,11 @@ static int qedf_eh_abort(struct scsi_cmnd *sc_cmd)
 	int rval;
 	uint8_t got_ref = 0;
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+	struct scsi_pointer *scsi_pointer =
+			qedf_scsi_pointer(sc_cmd);
+#endif
+
 	lport = shost_priv(sc_cmd->device->host);
 	qedf = (struct qedf_ctx *)lport_priv(lport);
 
@@ -1064,8 +1069,11 @@ static int qedf_eh_abort(struct scsi_cmnd *sc_cmd)
 		goto out;
 	}
 
-
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+	io_req = (struct qedf_ioreq *)scsi_pointer->ptr;
+#else
 	io_req = (struct qedf_ioreq *)sc_cmd->SCp.ptr;
+#endif
 	if (!io_req) {
 		QEDF_ERR(&(qedf->dbg_ctx), "sc_cmd not queued with lld, sc_cmd=%px,"
 			" op=0x%02x, port_id=%06x\n", sc_cmd, sc_cmd->cmnd[0],
@@ -1367,7 +1375,11 @@ static struct scsi_host_template qedf_host_template = {
 #endif
 	.max_sectors 	= 0xffff,
 	.queuecommand 	= qedf_queuecommand,
-	.shost_attrs	= qedf_host_attrs,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0))
+	.shost_attrs 	= qedf_host_attrs,
+#else
+	.shost_groups 	= qedf_host_groups,
+#endif
 	.eh_abort_handler	= qedf_eh_abort,
 	.eh_device_reset_handler = qedf_eh_device_reset, /* lun reset */
 	.eh_target_reset_handler = qedf_eh_target_reset, /* target reset */
@@ -3791,12 +3803,19 @@ static int qedf_set_fcoe_pf_param(struct qedf_ctx *qedf)
 	QEDF_INFO(&(qedf->dbg_ctx), QEDF_LOG_DISC, "Number of queues: %d.\n",
 	    qedf->num_queues);
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
+	dma_alloc_coherent(&qedf->pdev->dev, qedf->num_queues * sizeof(struct qedf_glbl_q_params), &qedf->hw_p_cpuq, GFP_ATOMIC);
+#else
 	qedf->p_cpuq = pci_alloc_consistent(qedf->pdev,
 	    qedf->num_queues * sizeof(struct qedf_glbl_q_params),
 	    &qedf->hw_p_cpuq);
-
+#endif
 	if (!qedf->p_cpuq) {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
+		QEDF_ERR(&(qedf->dbg_ctx), "dma_alloc_coherent failed.\n");
+#else
 		QEDF_ERR(&(qedf->dbg_ctx), "pci_alloc_consistent failed.\n");
+#endif
 		return 1;
 	}
 
@@ -3866,8 +3885,12 @@ static void qedf_free_fcoe_pf_param(struct qedf_ctx *qedf)
 
 	if (qedf->p_cpuq) {
 		size = qedf->num_queues * sizeof(struct qedf_glbl_q_params);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
+		dma_free_coherent(&qedf->pdev->dev, size, qedf->p_cpuq, qedf->hw_p_cpuq);
+#else
 		pci_free_consistent(qedf->pdev, size, qedf->p_cpuq,
 		    qedf->hw_p_cpuq);
+#endif
 	}
 
 	qedf_free_global_queues(qedf);

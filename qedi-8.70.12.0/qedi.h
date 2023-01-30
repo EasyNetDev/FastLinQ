@@ -453,6 +453,18 @@ struct qedi_percpu_s {
 	spinlock_t p_work_lock;		/* Per cpu worker lock */
 };
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+struct qedi_cmd2 {
+        struct scsi_pointer scsi_pointer;
+};
+
+static inline struct scsi_pointer *qedi_scsi_pointer(struct scsi_cmnd *cmd)
+{
+        struct qedi_cmd2 *qicmd = scsi_cmd_priv(cmd);
+        return &qicmd->scsi_pointer;
+}
+#endif
+
 /* Stolen from qed_cxt_api.h and adapted for qed_iscsi_info
  * Usage:
  *
@@ -479,7 +491,11 @@ static inline void *qedi_get_task_mem(struct qed_iscsi_tid *info, u32 tid)
 #endif
 #endif
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+extern const struct attribute_group *qedi_shost_groups[];
+#else
 extern struct device_attribute *qedi_shost_attrs[];
+#endif
 
 /* Map kthread_create_on_node simply to kthread_create if needed */
 #ifndef KTHREAD_CREATE_ON_NODE

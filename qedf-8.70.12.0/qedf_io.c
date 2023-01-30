@@ -601,6 +601,9 @@ static void  qedf_init_task(struct qedf_rport *fcport, struct fc_lport *lport,
 {
 	enum fcoe_task_type task_type;
 	struct scsi_cmnd *sc_cmd = io_req->sc_cmd;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+	struct request *req = NULL;
+#endif
 	struct io_bdt *bd_tbl = io_req->bd_tbl;
 	u8 fcp_cmnd[32];
 	u32 tmp_fcp_cmnd[8];
@@ -621,14 +624,24 @@ static void  qedf_init_task(struct qedf_rport *fcport, struct fc_lport *lport,
 
 	/* Choose which CQ to return I/O on */
 #if defined(NR_HW_QUEUES) && !defined(USE_BLK_MQ)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+	req = blk_mq_rq_from_pdu(sc_cmd);
+	uniq_tag = blk_mq_unique_tag(req);
+#else
 	uniq_tag = blk_mq_unique_tag(sc_cmd->request);
+#endif
 	hwq = blk_mq_unique_tag_to_hwq(uniq_tag);
 	/* If blk-mq is enabled, use the hardware queue id */
 	cq_idx = hwq;
 
 #elif defined(NR_HW_QUEUES) && defined(USE_BLK_MQ)
 	if (shost_use_blk_mq(qedf->lport->host)) {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+		req = blk_mq_rq_from_pdu(sc_cmd);
+		uniq_tag = blk_mq_unique_tag(req);
+#else
 		uniq_tag = blk_mq_unique_tag(sc_cmd->request);
+#endif
 		hwq = blk_mq_unique_tag_to_hwq(uniq_tag);
 		/* If blk-mq is enabled, use the hardware queue id */
 		cq_idx = hwq;
@@ -947,6 +960,10 @@ static void qedf_trace_io(struct qedf_rport *fcport, struct qedf_ioreq *io_req,
 int qedf_post_io_req(struct qedf_rport *fcport, struct qedf_ioreq *io_req)
 {
 	struct scsi_cmnd *sc_cmd = io_req->sc_cmd;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+	struct scsi_pointer *scsi_pointer =
+                        qedf_scsi_pointer(sc_cmd);
+#endif
 	struct Scsi_Host *host = sc_cmd->device->host;
 	struct fc_lport *lport = shost_priv(host);
 	struct qedf_ctx *qedf = lport_priv(lport);
@@ -958,7 +975,11 @@ int qedf_post_io_req(struct qedf_rport *fcport, struct qedf_ioreq *io_req)
 
 	/* Initialize rest of io_req fileds */
 	io_req->data_xfer_len = scsi_bufflen(sc_cmd);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+	scsi_pointer->ptr = (char *)io_req;
+#else
 	sc_cmd->SCp.ptr = (char *)io_req;
+#endif
 	io_req->sge_type = QEDF_IOREQ_FAST_SGE; /* Assume fast SGL by default */
 
 	/* Record which cpu this request is associated with */
@@ -1072,7 +1093,11 @@ qedf_queuecommand(struct scsi_cmnd *sc_cmd, void (*done)(struct scsi_cmnd *))
 		QEDF_ERR(&qedf->dbg_ctx, "Number of SG elements %d exceeds what hardware limitation of %d.\n",
 		    num_sgs, QEDF_MAX_BDS_PER_CMD);
 		sc_cmd->result = DID_ERROR;
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(5,16,0)
 		sc_cmd->scsi_done(sc_cmd);
+#else
+		scsi_done(sc_cmd);
+#endif
 		return 0;
 	}
 
@@ -1082,7 +1107,11 @@ qedf_queuecommand(struct scsi_cmnd *sc_cmd, void (*done)(struct scsi_cmnd *))
 		    "Returning DNC as unloading or stop io, flags 0x%lx.\n",
 		    qedf->flags);
 		sc_cmd->result = DID_NO_CONNECT << 16;
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(5,16,0)
 		sc_cmd->scsi_done(sc_cmd);
+#else
+		scsi_done(sc_cmd);
+#endif
 		return 0;
 	}
 
@@ -1091,7 +1120,11 @@ qedf_queuecommand(struct scsi_cmnd *sc_cmd, void (*done)(struct scsi_cmnd *))
 		    "Completing sc_cmd=%px DID_NO_CONNECT as MSI-X is not enabled.\n",
 		    sc_cmd);
 		sc_cmd->result = DID_NO_CONNECT << 16;
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(5,16,0)
 		sc_cmd->scsi_done(sc_cmd);
+#else
+		scsi_done(sc_cmd);
+#endif
 		return 0;
 	}
 
@@ -1101,7 +1134,11 @@ qedf_queuecommand(struct scsi_cmnd *sc_cmd, void (*done)(struct scsi_cmnd *))
 		    "fc_remote_port_chkready failed=0x%x for port_id=0x%06x.\n",
 		    rval, rport->port_id);
 		sc_cmd->result = rval;
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(5,16,0)
 		sc_cmd->scsi_done(sc_cmd);
+#else
+		scsi_done(sc_cmd);
+#endif
 		return 0;
 	}
 
@@ -1182,7 +1219,10 @@ static void qedf_parse_fcp_rsp(struct qedf_ioreq *io_req,
 	uint32_t fcp_sns_len = 0;
 	uint32_t fcp_rsp_len = 0;
 	uint8_t *rsp_info, *sense_data;
-
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+	struct scsi_pointer *scsi_pointer =
+		qedf_scsi_pointer(sc_cmd);
+#endif
 	io_req->fcp_status = FC_GOOD;
 	io_req->fcp_resid = 0;
 	if (rsp_flags & (FCOE_FCP_RSP_FLAGS_FCP_RESID_OVER |
@@ -1190,9 +1230,13 @@ static void qedf_parse_fcp_rsp(struct qedf_ioreq *io_req,
 		io_req->fcp_resid = fcp_rsp->fcp_resid;
 
 	io_req->scsi_comp_flags = rsp_flags;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0))
 	CMD_SCSI_STATUS(sc_cmd) = io_req->cdb_status =
 	    fcp_rsp->scsi_status_code;
-
+#else
+	scsi_pointer = io_req->cdb_status =
+	    fcp_rsp->scsi_status_code;
+#endif
 	if (rsp_flags &
 	    FCOE_FCP_RSP_FLAGS_FCP_RSP_LEN_VALID)
 		fcp_rsp_len = fcp_rsp->fcp_rsp_len;
@@ -1247,6 +1291,10 @@ void qedf_scsi_completion(struct qedf_ctx *qedf, struct fcoe_cqe *cqe,
 	u16 xid;
 	struct fcoe_task_context *task_ctx;
 	struct scsi_cmnd *sc_cmd;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+	struct scsi_pointer *scsi_pointer;
+	struct request *req = NULL;
+#endif
 	struct fcoe_cqe_rsp_info *fcp_rsp;
 	struct qedf_rport *fcport;
 	int refcount;
@@ -1279,6 +1327,7 @@ void qedf_scsi_completion(struct qedf_ctx *qedf, struct fcoe_cqe *cqe,
 	xid = io_req->xid;
 	task_ctx = qedf_get_task_mem(&qedf->tasks, xid);
 	sc_cmd = io_req->sc_cmd;
+	scsi_pointer = qedf_scsi_pointer(sc_cmd);
 	fcp_rsp = &cqe->cqe_info.rsp_info;
 
 	if (!sc_cmd) {
@@ -1286,37 +1335,66 @@ void qedf_scsi_completion(struct qedf_ctx *qedf, struct fcoe_cqe *cqe,
 		return;
 	}
 
-	if (!sc_cmd->SCp.ptr) {
-		QEDF_WARN(&(qedf->dbg_ctx), "SCp.ptr is NULL, returned in "
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+	if (!scsi_pointer->ptr) {
+		QEDF_WARN(&(qedf->dbg_ctx), "scsi_pointer->ptr is NULL, returned in "
 		    "another context.\n");
 		return;
 	}
-
+#else
+	if (!sc_cmd->SCp.ptr) {
+		QEDF_WARN(&(qedf->dbg_ctx), "sc_cmd->SCp.ptr->ptr is NULL, returned in "
+		    "another context.\n");
+		return;
+	}
+#endif
 	if (!sc_cmd->device) {
 		QEDF_ERR(&qedf->dbg_ctx, "Device for sc_cmd %px is NULL.\n",
 		    sc_cmd);
 		return;
 	}
 
-	if (!sc_cmd->request) {
-		QEDF_WARN(&(qedf->dbg_ctx), "sc_cmd->request is NULL, "
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+	req = blk_mq_rq_from_pdu(sc_cmd);
+
+	if (!req) {
+		QEDF_WARN(&(qedf->dbg_ctx), "req is NULL, "
 		    "sc_cmd=%px.\n", sc_cmd);
 		return;
 	}
 
 #ifdef BLK_DEV_SPECIAL
-	if (!sc_cmd->request->special) {
-		QEDF_WARN(&(qedf->dbg_ctx), "request->special is NULL so "
+	if (!req->special) {
+		QEDF_WARN(&(qedf->dbg_ctx), "req->special is NULL so "
 		    "request not valid, sc_cmd=%px.\n", sc_cmd);
 		return;
 	}
 #endif
-
-	if (!sc_cmd->request->q) {
-		QEDF_WARN(&(qedf->dbg_ctx), "request->q is NULL so request "
+	if (!req->q) {
+		QEDF_WARN(&(qedf->dbg_ctx), "req->q is NULL so request "
 		   "is not valid, sc_cmd=%px.\n", sc_cmd);
 		return;
 	}
+#else
+	if (!sc_cmd->request) {
+		QEDF_WARN(&(qedf->dbg_ctx), "sc_cmd->request is NULL, "
+		    "sc_cmd=%px.\n", sc_cmd);
+		return;
+	}
+#ifdef BLK_DEV_SPECIAL
+	if (!sc_cmd->request->special) {
+		QEDF_WARN(&(qedf->dbg_ctx), "sc_cmd->request->special is NULL so "
+		    "request not valid, sc_cmd=%px.\n", sc_cmd);
+		return;
+	}
+#endif
+	if (!sc_cmd->request->q) {
+		QEDF_WARN(&(qedf->dbg_ctx), "sc_cmd->request->q is NULL so request "
+		   "is not valid, sc_cmd=%px.\n", sc_cmd);
+		return;
+	}
+
+#endif
 
 	fcport = io_req->fcport;
 
@@ -1476,8 +1554,13 @@ out:
 	clear_bit(QEDF_CMD_OUTSTANDING, &io_req->flags);
 
 	io_req->sc_cmd = NULL;
-	sc_cmd->SCp.ptr =  NULL;
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(5,16,0)
+	sc_cmd->SCp.ptr = NULL;
 	sc_cmd->scsi_done(sc_cmd);
+#else
+	scsi_pointer->ptr = NULL;
+	scsi_done(sc_cmd);
+#endif
 	kref_put(&io_req->refcount, qedf_release_cmd);
 }
 
@@ -1487,6 +1570,9 @@ void qedf_scsi_done(struct qedf_ctx *qedf, struct qedf_ioreq *io_req,
 {
 	u16 xid;
 	struct scsi_cmnd *sc_cmd;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,16,0)
+	struct scsi_pointer *scsi_pointer;
+#endif
 	int refcount;
 
 	if (!io_req) {
@@ -1520,11 +1606,21 @@ void qedf_scsi_done(struct qedf_ctx *qedf, struct qedf_ioreq *io_req,
 		goto bad_scsi_ptr;
 	}
 
-	if (!sc_cmd->SCp.ptr) {
-		QEDF_WARN(&(qedf->dbg_ctx), "SCp.ptr is NULL, returned in "
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,16,0)
+	scsi_pointer = qedf_scsi_pointer(sc_cmd);
+
+	if (!scsi_pointer->ptr) {
+		QEDF_WARN(&(qedf->dbg_ctx), "scsi_pointer->ptr is NULL, returned in "
 		    "another context.\n");
 		return;
 	}
+#else
+	if (!sc_cmd->SCp.ptr) {
+		QEDF_WARN(&(qedf->dbg_ctx), "sc_cmd->SCp.ptr is NULL, returned in "
+		    "another context.\n");
+		return;
+	}
+#endif
 
 	/*
 	 * Check validity of scsi_cmnd back pointer
@@ -1553,11 +1649,13 @@ void qedf_scsi_done(struct qedf_ctx *qedf, struct qedf_ioreq *io_req,
 		goto bad_scsi_ptr;
 	}
 
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(5,16,0)
 	if (!sc_cmd->scsi_done) {
 		QEDF_ERR(&qedf->dbg_ctx, "sc_cmd->scsi_done for sc_cmd %px is NULL.\n",
 		    sc_cmd);
 		goto bad_scsi_ptr;
 	}
+#endif
 
 	qedf_unmap_sg_list(qedf, io_req);
 
@@ -1590,8 +1688,15 @@ void qedf_scsi_done(struct qedf_ctx *qedf, struct qedf_ioreq *io_req,
 		qedf_trace_io(io_req->fcport, io_req, QEDF_IO_TRACE_RSP);
 
 	io_req->sc_cmd = NULL;
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,16,0)
+	scsi_pointer->ptr = NULL;
+	scsi_done(sc_cmd);
+#else
 	sc_cmd->SCp.ptr = NULL;
 	sc_cmd->scsi_done(sc_cmd);
+#endif
+
 	kref_put(&io_req->refcount, qedf_release_cmd);
 	return;
 
@@ -2686,6 +2791,10 @@ int qedf_initiate_tmf(struct scsi_cmnd *sc_cmd, u8 tm_flags)
 	struct qedf_ioreq *io_req = NULL;
 	int ref_cnt = 0;
 	struct fc_rport_priv *rdata = fcport->rdata;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+	struct scsi_pointer *scsi_pointer =
+			qedf_scsi_pointer(sc_cmd);
+#endif
 
         QEDF_ERR(NULL, "qedf_initiate_tmf tm_flags 0x%x sc_cmd %px "
             "op = 0x%02x target_id = 0x%x lun=%d\n", tm_flags, sc_cmd,
@@ -2701,8 +2810,13 @@ int qedf_initiate_tmf(struct scsi_cmnd *sc_cmd, u8 tm_flags)
 	    (tm_flags == FCP_TMF_TGT_RESET) ? "TARGET RESET" : "LUN RESET");
 
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+	if (scsi_pointer->ptr) {
+		io_req = (struct qedf_ioreq *)scsi_pointer->ptr;
+#else
 	if (sc_cmd->SCp.ptr) {
 		io_req = (struct qedf_ioreq *)sc_cmd->SCp.ptr;
+#endif
 #ifdef KREF_READ
 		ref_cnt = kref_read(&io_req->refcount);
 #else

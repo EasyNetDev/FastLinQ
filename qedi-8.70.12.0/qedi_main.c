@@ -632,10 +632,14 @@ static int qedi_cm_alloc_mem(struct qedi_ctx *qedi)
 	qedi->ep_tbl = kzalloc(mem_size, GFP_KERNEL);
 	if (!qedi->ep_tbl)
 		return -ENOMEM;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0))
+	port_id = get_random_u32() % QEDI_LOCAL_PORT_RANGE;
+#else
 #if defined PRANDOM_API || PRANDOM_U32
 	port_id = prandom_u32() % QEDI_LOCAL_PORT_RANGE;
 #else
 	port_id = random32() % QEDI_LOCAL_PORT_RANGE;
+#endif
 #endif
 	if (qedi_init_id_tbl(&qedi->lcl_port_tbl, QEDI_LOCAL_PORT_RANGE,
 			     QEDI_LOCAL_PORT_MIN, port_id)) {
@@ -876,11 +880,19 @@ static int qedi_set_iscsi_pf_param(struct qedi_ctx *qedi)
 	memset(&qedi->pf_params.iscsi_pf_params, 0,
 	       sizeof(qedi->pf_params.iscsi_pf_params));
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
+        dma_alloc_coherent(&qedi->pdev->dev, qedi->num_queues * sizeof(struct qedi_glbl_q_params), &qedi->hw_p_cpuq, GFP_ATOMIC);
+#else
 	qedi->p_cpuq = pci_alloc_consistent(qedi->pdev,
 			qedi->num_queues * sizeof(struct qedi_glbl_q_params),
 			&qedi->hw_p_cpuq);
+#endif
 	if (!qedi->p_cpuq) {
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
+		QEDI_ERR(&qedi->dbg_ctx, "dma_alloc_coherent fail\n");
+#else
 		QEDI_ERR(&qedi->dbg_ctx, "pci_alloc_consistent fail\n");
+#endif
 		rval = -1;
 		goto err_alloc_mem;
 	}
@@ -940,8 +952,12 @@ static void qedi_free_iscsi_pf_param(struct qedi_ctx *qedi)
 
 	if (qedi->p_cpuq) {
 		size = qedi->num_queues * sizeof(struct qedi_glbl_q_params);
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 18, 0))
+                dma_free_coherent(&qedi->pdev->dev, size, qedi->p_cpuq, qedi->hw_p_cpuq);
+#else
 		pci_free_consistent(qedi->pdev, size, qedi->p_cpuq,
 				    qedi->hw_p_cpuq);
+#endif
 	}
 
 	qedi_free_global_queues(qedi);
@@ -1960,6 +1976,10 @@ static void qedi_scsi_completion(struct qedi_ctx *qedi,
 				 struct iscsi_conn *conn)
 {
 	struct scsi_cmnd *sc_cmd;
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+	struct scsi_pointer *scsi_pointer;
+        struct request *req = NULL;
+#endif
 	struct qedi_cmd *cmd = task->dd_data;
 	struct iscsi_session *session = conn->session;
 #if defined STRUCT_SCSI_RSP
@@ -1994,12 +2014,48 @@ static void qedi_scsi_completion(struct qedi_ctx *qedi,
 		goto error;
 	}
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+	scsi_pointer = qedi_scsi_pointer(sc_cmd);
+
+	if (!scsi_pointer->ptr) {
+		QEDI_WARN(&qedi->dbg_ctx,
+			  "scsi_pointer->ptr is NULL, returned in another context.\n");
+		goto error;
+	}
+#else
 	if (!sc_cmd->SCp.ptr) {
 		QEDI_WARN(&qedi->dbg_ctx,
 			  "SCp.ptr is NULL, returned in another context.\n");
 		goto error;
 	}
+#endif
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+	req = blk_mq_rq_from_pdu(sc_cmd);
+	if (!req) {
+		QEDI_WARN(&qedi->dbg_ctx,
+			  "req is NULL, sc_cmd=%p.\n",
+			  sc_cmd);
+		goto error;
+	}
+
+#if defined BLK_DEV_SPECIAL
+	if (!req->special) {
+		QEDI_WARN(&qedi->dbg_ctx,
+			  "req->special is NULL so request not valid, sc_cmd=%p.\n",
+			  sc_cmd);
+		goto error;
+	}
+#endif
+
+	if (!req->q) {
+		QEDI_WARN(&qedi->dbg_ctx,
+			  "req->q is NULL so request is not valid, sc_cmd=%p.\n",
+			  sc_cmd);
+		goto error;
+	}
+
+#else
 	if (!sc_cmd->request) {
 		QEDI_WARN(&qedi->dbg_ctx,
 			  "sc_cmd->request is NULL, sc_cmd=%p.\n",
@@ -2022,6 +2078,9 @@ static void qedi_scsi_completion(struct qedi_ctx *qedi,
 			  sc_cmd);
 		goto error;
 	}
+
+#endif
+
 
 #if defined STRUCT_SCSI_RSP
 	hdr = (struct iscsi_scsi_rsp *)task->hdr;

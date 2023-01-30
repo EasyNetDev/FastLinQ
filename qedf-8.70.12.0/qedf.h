@@ -129,7 +129,11 @@ enum qedf_ioreq_event {
 #define FC_GOOD		0
 #define FCOE_FCP_RSP_FLAGS_FCP_RESID_OVER	(0x1<<2)
 #define FCOE_FCP_RSP_FLAGS_FCP_RESID_UNDER	(0x1<<3)
-#define CMD_SCSI_STATUS(Cmnd)			((Cmnd)->SCp.Status)
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0))
+#define CMD_SCSI_STATUS(Cmnd)			((sc_cmd)->SCp.Status)
+#endif
+
 #define FCOE_FCP_RSP_FLAGS_FCP_RSP_LEN_VALID	(0x1<<0)
 #define FCOE_FCP_RSP_FLAGS_FCP_SNS_LEN_VALID	(0x1<<1)
 struct qedf_ioreq {
@@ -226,6 +230,18 @@ struct qedf_ioreq {
 
 	bool alloc;
 };
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+struct qedf_cmd {
+	struct scsi_pointer scsi_pointer;
+};
+
+static inline struct scsi_pointer *qedf_scsi_pointer(struct scsi_cmnd *cmd)
+{
+	struct qedf_cmd *qfcmd = scsi_cmd_priv(cmd);
+	return &qfcmd->scsi_pointer;
+}
+#endif
 
 extern struct workqueue_struct *qedf_io_wq;
 
@@ -568,8 +584,11 @@ extern void qedf_process_abts_compl(struct qedf_ctx *qedf, struct fcoe_cqe *cqe,
 	struct qedf_ioreq *io_req);
 extern struct qedf_ioreq *qedf_alloc_cmd(struct qedf_rport *fcport,
 	u8 cmd_type);
-
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0))
+extern const struct attribute_group *qedf_host_groups[];
+#else
 extern struct device_attribute *qedf_host_attrs[];
+#endif
 extern void qedf_cmd_timer_set(struct qedf_ctx *qedf,
 	struct qedf_ioreq *io_req, unsigned int timer_msecs);
 extern int qedf_init_mp_req(struct qedf_ioreq *io_req);

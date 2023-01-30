@@ -66,11 +66,28 @@ out:
 static DEVICE_ATTR(fcoe_mac, S_IRUGO, qedf_fcoe_mac_show, NULL);
 static DEVICE_ATTR(fka_period, S_IRUGO, qedf_fka_period_show, NULL);
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0))
 struct device_attribute *qedf_host_attrs[] = {
 	&dev_attr_fcoe_mac,
 	&dev_attr_fka_period,
 	NULL,
 };
+#else
+static struct attribute *qedf_host_attrs[] = {
+	&dev_attr_fcoe_mac.attr,
+	&dev_attr_fka_period.attr,
+	NULL,
+};
+
+static const struct attribute_group qedf_host_attr_group = {
+	.attrs = qedf_host_attrs
+};
+
+const struct attribute_group *qedf_host_groups[] = {
+	&qedf_host_attr_group,
+	NULL
+};
+#endif
 
 extern const struct qed_fcoe_ops *qed_ops;
 
